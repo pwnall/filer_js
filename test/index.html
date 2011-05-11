@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<head>
+  <title>Uploader test</title>
+  <link href="uploader.css" rel="stylesheet" type="text/css" />
+  <script src="jquery-1.6.min.js" type="text/javascript"></script>
+  <script src="uploader.js" type="text/javascript"></script>
+</head>
+<body>
+  <div id="drop-area">
+    <p>
+      Drag the file to be uploaded here.
+    </p>
+  </div>
+  <p>
+    Or <button id="fake-file-control">click here</button> to select a file.
+  </p>
+  <input type="file" id="real-file-control" />
+  
+  <div id="upload-info">
+    <p>
+      The file that will be uploaded is:
+      <span id="upload-file-name"></span>
+    </p>
+  </div>
+  <div id="status">
+    <p>
+      Status: <span id="status-text"></span>
+    </p>
+  </div>
+</body>
