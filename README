@@ -1,0 +1,49 @@
+Filer is a JavaScript library for large file uploads using the HTML5 file APIs.
+
+
+REQUIREMENTS
+
+The Pwnalytics JS has been tested and works against the following browsers:
+* Chromium / Google Chrome 11.0+
+* Firefox 4.0+
+
+Patches for extending compatibility are always welcome.
+
+
+USAGE
+
+
+todo
+
+
+BUILDING
+
+Filer's build process is driven by a Rakefile, and its dependencies are managed
+by Gemfile, so you need the following:
+* rubygems
+* rake, bundler -- gem install rake bundler
+
+The other dependencies can be installed from bundler:
+
+    bundle install
+
+Kick off the build process from rake:
+
+    rake build
+
+The build outputs a development version in bin/filer.js and a minified version
+intended for production in bin/filer.min.js
+
+
+TESTING
+
+I couldn't figure out how to automate the uploading UI, so the testing is
+manual, and uses a local Sinatra server.
+
+Launch the test server:
+
+    rake server
+
+Then point your server to the test URL and test away.
+
+     http://localhost:9393
