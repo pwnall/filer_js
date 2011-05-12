@@ -1,8 +1,10 @@
 <!DOCTYPE html>
+<html>
 <head>
   <title>Uploader test</title>
   <link href="/stylesheet.css" rel="stylesheet" type="text/css" />
   <script src="/files/lib/jquery-1.6.min.js" type="text/javascript"></script>
+  <script src="/files/lib/sjcl.min.js" type="text/javascript"></script>
   <script src="/files/bin/filer.js" type="text/javascript"></script>
 </head>
 <body>
@@ -12,9 +14,8 @@
     </p>
   </div>
   <p>
-    Or <button id="fake-file-control">click here</button> to select a file.
+    Or <button id="upload-button">click here</button> to select a file.
   </p>
-  <input type="file" id="real-file-control" />
   
   <div id="upload-info">
     <p>
@@ -27,4 +28,8 @@
       Status: <span id="status-text"></span>
     </p>
   </div>
+  <script type="text/javascript">
+    var filer = new PwnFiler({uploadButton: '#upload-button', dropArea: '#drop-area'});
+  </script>
 </body>
+</html>

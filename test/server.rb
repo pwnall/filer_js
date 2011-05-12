@@ -17,12 +17,10 @@ set :views, File.dirname(__FILE__)
 get '/' do
   send_file 'test/index.html', :disposition => :inline
 end
-
 # Test CSS.
 get '/stylesheet.css' do
   scss :stylesheet
 end
-
 # Test assets.
 get '/files/*' do
   send_file File.join(File.dirname(__FILE__), '..', params[:splat])

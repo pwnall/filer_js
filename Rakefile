@@ -10,14 +10,14 @@ rescue Bundler::BundlerError => e
 end
 require 'rake'
 
-
 # Output directory.
 directory 'bin'
 
 # Development binary.
-file 'bin/filer.js' => Dir['vendor/crypto/*.js'].sort + Dir['/src/filer/*.js'].sort do
-  Kernel.system 'cat vendor/crypto/*.js src/filer/*.js  > bin/filer.js'
+file 'bin/filer.js' => Dir['src/filer/*.js'].sort do
+  Kernel.system 'cat src/filer/*.js  > bin/filer.js'
 end
+file 'bin/filer.min.js' => ['bin']
 
 # Production binaries.
 file 'bin/filer.min.js' => 'bin/filer.js' do
@@ -26,13 +26,13 @@ end
 
 # Build tasks.
 task :build => ['bin/filer.min.js']
-task :default => [:generate, :build]
+task :default => [:build, :large_files]
 
 # Generate files for the upload test.
 require 'fileutils'
-task 'test/files/blank_1.bin', 'test/files/blank_1000.bin' do
-  FileUtils.mkdir_p 'test/files'
-  [1, 10, 100, 1000].each do |megs|
+[1, 10, 100, 1000].each do |megs|
+  file "test/files/blank_#{megs}.bin" do
+    FileUtils.mkdir_p 'test/files'
     size = megs * 1024 * 1024
     File.open("test/files/blank_#{megs}.bin", 'wb') do |f|
       megs.times do |i|
@@ -41,11 +41,10 @@ task 'test/files/blank_1.bin', 'test/files/blank_1000.bin' do
       end
     end
   end
+  task :large_files => "test/files/blank_#{megs}.bin"
 end
-task :generate => ['test/files/blank_1.bin', 'test/files/blank_1000.bin']
 
-task :default => :generate
-
+desc 'Launch the test Sinatra backend'
 task :server do
   Kernel.system 'shotgun test/server.rb'
 end
