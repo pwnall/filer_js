@@ -13,6 +13,8 @@
  *   * dropArea: CSS selector or DOM element for area that accepts drop files
  *   * dropAreaActiveClass: CSS class applied to drop area when the user is
  *                          dragging a file on it ('active' by default)
+ *   * selection: CSS selector or DOM element for list that displays selected
+ *                files (should be an 'ol' or 'ul' element)
  */
 var PwnFiler = PwnFiler || function (options) {
   options = options || {};
@@ -32,5 +34,15 @@ var PwnFiler = PwnFiler || function (options) {
       area = document.querySelector(area);
     }
     this.initDropArea(area, options.dropAreaActiveClass || 'active');
+  }
+
+  if (options.selection) {
+    var selection = options.selection;
+    if (!(selection instanceof Element)) {
+      selection = document.querySelector(selection);
+    }
+    this.initSelection(selection);
+  } else {
+    throw "Missing file selection display";
   }
 };

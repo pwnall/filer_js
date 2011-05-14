@@ -1,5 +1,5 @@
-/** Updates internal state to reflect the actively selected file. */
-PwnFiler.prototype.onFileSelect = function (files) {
+/** Upload sketch. */
+PwnFiler.prototype.pumpFiles = function (files) {
   if (files) {
     var file = files[0];
     this.currentFile = file[0];

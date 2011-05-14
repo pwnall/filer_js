@@ -20,6 +20,7 @@ PwnFiler.prototype.initDropArea = function (dropArea, dropActiveClass) {
   }, false);
   this.dropArea = dropArea;
   this.dropActiveClass = dropActiveClass;
+  this.dropAreaEnterCount = 0;
 };
 
 /** Highlights the file drop area, to show that it accepts files. */
@@ -78,9 +79,7 @@ PwnFiler.prototype.onDropAreaDrop = function (event) {
   this.deactivateDropArea();
   
   var transfer = event.dataTransfer;
-  if (transfer.files.length === 0) {
-    this.onFileSelect(null);
-  } else {
+  if (transfer.files.length !== 0) {
     var files = [];
     for (var i = 0; i < transfer.files.length; i += 1) {
       files[i] = transfer.files.item(i);

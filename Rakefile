@@ -15,6 +15,7 @@ directory 'bin'
 
 # Development binary.
 file 'bin/filer.js' => Dir['src/filer/*.js'].sort do
+  File.unlink 'bin/filer.js'
   Kernel.system 'cat src/filer/*.js  > bin/filer.js'
 end
 file 'bin/filer.min.js' => ['bin']

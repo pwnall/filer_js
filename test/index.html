@@ -17,19 +17,18 @@
     Or <button id="upload-button">click here</button> to select a file.
   </p>
   
-  <div id="upload-info">
-    <p>
-      The file that will be uploaded is:
-      <span id="upload-file-name"></span>
-    </p>
-  </div>
-  <div id="status">
-    <p>
-      Status: <span id="status-text"></span>
-    </p>
-  </div>
+  <p>
+    Files selected for upload
+    
+    <ul id="upload-selection">
+      
+    </ul>
+  </p>
+  
   <script type="text/javascript">
-    var filer = new PwnFiler({uploadButton: '#upload-button', dropArea: '#drop-area'});
+    var filer = new PwnFiler({uploadButton: '#upload-button',
+                              dropArea: '#drop-area',
+                              selection: '#upload-selection'});
   </script>
 </body>
 </html>
