@@ -8,6 +8,10 @@
  * 
  * The following options are understood:
  *   * multiple: support multiple files (false by default)
+ *   * commitButton: CSS selector or DOM element for the upload commit button;
+ *                   required for multi-file upload; single-file upload will
+ *                   start as soon as the file is selected if no commit button
+ *                   is provided
  *   * uploadButton: CSS selector or DOM element for the user-friendly upload
  *                   button
  *   * dropArea: CSS selector or DOM element for area that accepts drop files
@@ -35,13 +39,25 @@ var PwnFiler = PwnFiler || function (options) {
     }
     this.initDropArea(area, options.dropAreaActiveClass || 'active');
   }
+  
+  var commit = null;
+  if (options.commitButton) {
+    commit = options.commitButton;
+    if (!(commit instanceof Element)) {
+      commit = document.querySelector(commit);
+    }
+  } else {
+    if (this.multiple) {
+      throw "No commit button provided for multi-file uploader";
+    }
+  }
 
   if (options.selection) {
     var selection = options.selection;
     if (!(selection instanceof Element)) {
       selection = document.querySelector(selection);
     }
-    this.initSelection(selection);
+    this.initSelection(selection, commit);
   } else {
     throw "Missing file selection display";
   }

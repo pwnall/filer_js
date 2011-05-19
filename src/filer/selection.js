@@ -5,9 +5,11 @@
  * 
  * @param selection DOM element that will display the files selected for upload
  */
-PwnFiler.prototype.initSelection = function (selection) {
+PwnFiler.prototype.initSelection = function (selection, commitButton) {
   this.selection = [];
   this.selectionDom = selection;
+  this.commitButton = commitButton;
+  this.commitButton.setAttribute('disabled', 'disabled');
 };
 
 /** Called when the user selects one or more files for uploading. */
@@ -52,6 +54,8 @@ PwnFiler.prototype.removeFile = function (fileData) {
   }
   this.selection.splice(index, 1);
   this.selectionDom.removeChild(fileData.selectionDom);
+  
+  if (this.commitButton && this.)
   
   // TODO: cancel any in-progress upload
 };
