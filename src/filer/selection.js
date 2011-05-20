@@ -9,7 +9,14 @@ PwnFiler.prototype.initSelection = function (selection, commitButton) {
   this.selection = [];
   this.selectionDom = selection;
   this.commitButton = commitButton;
-  this.commitButton.setAttribute('disabled', 'disabled');
+  if (this.commitButton) {
+    this.commitButton.setAttribute('disabled', 'disabled');
+    
+    var filer = this;
+    this.commitButton.addEventListener('click', function (event) {
+      return filer.onCommitClick(event);
+    });
+  }
 };
 
 /** Called when the user selects one or more files for uploading. */
@@ -26,8 +33,7 @@ PwnFiler.prototype.onFileSelect = function (files) {
   }
 
   if (!this.multiple) {
-    // Commit upload.
-    return;
+    this.commitUpload();
   }
 };
 
@@ -42,6 +48,9 @@ PwnFiler.prototype.addFile = function (file) {
   var newFile = {domFile: file};
   this.selection.push(newFile);
   this.selectionDom.appendChild(this.buildFileSelectionDom(newFile));
+  if (this.commitButton) {
+    this.commitButton.removeAttribute('disabled');
+  }
 };
 
 /** Removes the file at a given position in the upload list. */
@@ -55,7 +64,9 @@ PwnFiler.prototype.removeFile = function (fileData) {
   this.selection.splice(index, 1);
   this.selectionDom.removeChild(fileData.selectionDom);
   
-  if (this.commitButton && this.)
+  if (this.commitButton && this.selection.length === 0) {
+    this.commitButton.setAttribute('disabled', 'disabled');
+  }
   
   // TODO: cancel any in-progress upload
 };
@@ -109,4 +120,16 @@ PwnFiler.prototype.removeClickListener = function (fileData) {
     event.preventDefault();
     return false;
   };
+};
+
+/** Called when the user presses on the commit upload button. */
+PwnFiler.prototype.onCommitClick = function (event) {
+  this.commitUpload();
+  event.preventDefault();
+  return false;
+};
+
+/** Starts uploading the files selected by the user. */
+PwnFiler.prototype.commitUpload = function () {
+  
 };

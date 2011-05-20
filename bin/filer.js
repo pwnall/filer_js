@@ -1,5 +1,5 @@
 /*jslint white: true, undef: true, newcap: true, nomen: false, onevar: false, regexp: false, plusplus: true, bitwise: true, maxlen: 80, indent: 2 */
-/*global $, console, document, window, Element, FileReader */
+/*global console, document, window, Element, FileReader, sjcl, XMLHttpRequest */
 
 /* This file is concatenated first in the big JS file. */
 
@@ -8,6 +8,10 @@
  * 
  * The following options are understood:
  *   * multiple: support multiple files (false by default)
+ *   * commitButton: CSS selector or DOM element for the upload commit button;
+ *                   required for multi-file upload; single-file upload will
+ *                   start as soon as the file is selected if no commit button
+ *                   is provided
  *   * uploadButton: CSS selector or DOM element for the user-friendly upload
  *                   button
  *   * dropArea: CSS selector or DOM element for area that accepts drop files
@@ -35,13 +39,25 @@ var PwnFiler = PwnFiler || function (options) {
     }
     this.initDropArea(area, options.dropAreaActiveClass || 'active');
   }
+  
+  var commit = null;
+  if (options.commitButton) {
+    commit = options.commitButton;
+    if (!(commit instanceof Element)) {
+      commit = document.querySelector(commit);
+    }
+  } else {
+    if (this.multiple) {
+      throw "No commit button provided for multi-file uploader";
+    }
+  }
 
   if (options.selection) {
     var selection = options.selection;
     if (!(selection instanceof Element)) {
       selection = document.querySelector(selection);
     }
-    this.initSelection(selection);
+    this.initSelection(selection, commit);
   } else {
     throw "Missing file selection display";
   }
@@ -226,6 +242,258 @@ PwnFiler.dataTransferHasFiles = function (data) {
   }
   return false;
 };
+/** Manages the upload pipeline. */
+
+/** Sets up the upload pipeline. */
+PwnFiler.prototype.initPipeline = function (options) {
+  var pipeline = this.pipeline = {};
+  pipeline.blockQ = new PwnFiler.BlockQueue(options.blockSize || 1024 * 1024);
+  pipeline.readQ = new PwnFiler.TaskQueue(pipeline.blockQ,
+      PwnFiler.ReadQueue.create, options.readQueueSize || 5);
+  pipeline.hashQ = new PwnFiler.TaskQueue(pipeline.readQ,
+      PwnFiler.TaskQueue.create, options.hashQueueSize || 5);
+  pipeline.sendQ = new PwnFiler.SendQueue(pipeline.sendQ,
+      PwnFiler.UploadTask.create, 1);
+};
+
+/** Special queue that takes files and breaks them up into blobs. */
+PwnFiler.BlockQueue = function (blockSize) {
+  this.blockSize = blockSize;
+  this.files = [];
+  this.currentFile = 0;
+  this.currentOffset = 0;
+};
+/** Pushes a file into the queue. */
+PwnFiler.BlockQueue.prototype.push = function (fileData) {
+  var fileId = sjcl.hash.sha256.hash(fileData.domFile.name);
+  this.files.push({fileData: fileData, fileId: fileId});
+};
+/** True if there is nothing to pop from the queue. */
+PwnFiler.BlockQueue.prototype.empty = function () {
+  return this.currentFile > this.files.length;
+};
+/** A blob data object to be read, or null if the queue is empty. */
+PwnFiler.BlockQueue.prototype.pop = function () {
+  if (this.empty()) {
+    return null;
+  }
+  
+  var blobData = this.files[this.currentFile];
+  var file = blobData.fileData.domFile;
+  var bytesLeft = file.size - this.currentOffset;
+  var blockSize = Math.min(this.blockSize, bytesLeft);
+  var blob = file;
+  var start = this.currentOffset;
+  if (file.slice) {
+    blob = file.slice(start, blockSize, file.type);
+  } else if (file.mozSlice) {
+    blob = file.mozSlice(start, start + blockSize, file.type);
+  } else if (file.webkitSlice) {
+    blob = file.webkitSlice(start, start + blockSize, file.type);
+  } else {
+    // No slice support, reading in the whole file.
+    blockSize = bytesLeft;
+    blob = file;
+  }
+  blobData.blob = blob;
+  blobData.start = start;
+  
+  this.currentOffset += blockSize;
+  if (file.size <= this.currentOffset) {
+    this.currentOffset = 0;
+    this.currentFile += 1;
+  }
+  
+  return blobData;
+};
+/** Indicates a desire to pop data, calls onData when data is available. */
+PwnFiler.BlockQueue.prototype.wantData = function () {
+  if (!this.empty()) {
+    this.onData();
+  }
+};
+/** Called when data is available to be popped from the queue. */
+PwnFiler.BlockQueue.prototype.onData = function () { };
+
+/** Reads a blob (file fragment) into memory. */
+PwnFiler.ReadTask = function (blobData, callback) {
+  this.blobData = blobData;
+  this.callback = callback;
+  var reader = new FileReader();
+  this.reader = reader;
+  var task = this;
+  reader.onloadend = function (event) {
+    if (event.target.readyState !== FileReader.DONE || this.blobData === null) {
+      return true;
+    }
+    var result = task.blobData;
+    task.blobData = null;
+    result.binaryData = event.target.result;
+    task.callback(result);
+  };
+  reader.readAsBinaryString(blobData.blob);
+};
+/** Creates a ReadTask instance. */
+PwnFiler.ReadTask.create = function (blobData, callback) {
+  return new PwnFiler.ReadTask(blobData, callback);
+};
+/** Cancels a partial file read task. */
+PwnFiler.ReadTask.prototype.cancel = function (event) {
+  if (this.blobData === null) {
+    return;
+  }
+  this.blobData = null;
+  this.reader.abort();
+};
+
+/** Computes a cryptographic hash for a blob (file fragment). */
+PwnFiler.HashTask = function (blobData, callback) {
+  this.blobData = blobData;
+  this.callback = callback;
+  
+  // TODO(pwnall): run the computation in a Web worker
+  this.blobData.hashId = sjcl.hash.sha256.hash(this.blobData.binaryData);
+  this.callback(this.blobData);
+};
+/** Creates a HashTask instance. */
+PwnFiler.HashTask.create = function (blobData, callback) {
+  return new PwnFiler.HashTask(blobData, callback);
+};
+/** File hashing cannot be aborted. */
+PwnFiler.HashTask.prototype.cancel = function () {
+  return;
+};
+
+/** Uploads a blob (file fragment) to a server. */
+PwnFiler.UploadTask = function (backendUrl, progressCallback, blobData,
+                                finishCallback) {
+  this.blobData = blobData;
+  this.finishCallback = finishCallback;
+  var xhr = new XMLHttpRequest();
+  this.xhr = xhr;
+  var task = this;
+  xhr.onprogress = function (event) {
+    
+  };
+  xhr.onloadend = function (event) {
+    if (event.target.readyState !== XMLHttpRequest.DONE ||
+        this.blobData === null) {
+      return true;
+    }
+    var result = task.blobData;
+    task.blobData = null;
+    result.binaryData = event.target.result;
+    task.finishCallback(result);
+  };
+  xhr.open('POST', backendUrl + '/' + blobData.hashId, true);
+  xhr.setRequestHeader('X-Filer-Start', blobData.start);
+  xhr.setRequestHeader('X-Filer-ID', blobData.fileId);
+  xhr.setRequestHeader('Content-Type', blobData.blob.mimeType);
+  xhr.send(blobData.binaryData);
+};
+/** Creates an UploadTask constructor. */
+PwnFiler.UploadTask.create = function (backendUrl, progressCallback) {
+  return function (blobData, callback) {
+    return new PwnFiler.UploadTask(backendUrl, progressCallback, blobData,
+                                   callback);
+  };
+};
+/** Cancels a partial file read task. */
+PwnFiler.UploadTask.prototype.cancel = function (event) {
+  if (this.blobData === null) {
+    return;
+  }
+  this.blobData = null;
+  this.xhr.abort();
+};
+/**
+ * Executes an asynchronous task, and buffers a fixed amount of results.
+ * 
+ * @param sourceQueue the queue that feeds data into this queue; can be null
+ * @param createTask function(input, callback) that returns a running
+ *                   asynchronous task which can be aborted by calling cancel()
+ *                   on it; upon completion, the task will call callback(result)
+ * @param poolSize number of results to be cached (defaults to 1)
+ */
+PwnFiler.TaskQueue = function (sourceQueue, createTask, poolSize) {
+  this.pool = [];  // Results from completed tasks. 
+  this.poolSize = poolSize || 1;
+  this.pendingTask = null;  // Running task.
+  this.pendingTaskData = null;  // The input given to the running task.
+  this.source = sourceQueue;
+  this.createTask = createTask;
+  
+  var queue = this;
+  this.unboundOnTaskFinish = function (result) {
+    this.onTaskFinish(result);
+  };
+  this.unboundOnSourceData = function () {
+    queue.onSourceData();
+  };
+  if (this.source) {
+    this.source.onData = this.unboundOnSourceData;
+  }
+};
+
+/** True if there is nothing currently available to pop from the queue. */
+PwnFiler.TaskQueue.prototype.empty = function () {
+  return this.pool.length === 0;
+};
+
+/** True if there is no room for pushing objects in the queue. */
+PwnFiler.TaskQueue.prototype.full = function () {
+  return this.pool.length >= this.poolSize;
+};
+
+/** A blob contents object, or null if the queue is empty. */
+PwnFiler.TaskQueue.prototype.pop = function () {
+  var returnValue = this.empty() ? null : this.pool.pop();
+  if (!this.full()) {
+    this.source.wantData();
+  }
+  return returnValue;
+};
+
+/** Tells the queue that its source queue has data available. */
+PwnFiler.TaskQueue.prototype.onSourceData = function () {
+  if (this.pendingTask || this.full()) {
+    return;
+  }
+  
+  this.pendingTaskData = this.source.pop();
+  this.pendingTask = this.createTask(this.pendingTaskData,
+                                     this.unboundOnTaskFinish);
+};
+/** onSourceData variant that doesn't require scope. */
+PwnFiler.TaskQueue.prototype.unboundOnSourceData = null;
+
+/** Called by the async task when it is finished. */
+PwnFiler.TaskQueue.prototype.onTaskFinish = function (result) {
+  this.pendingTask = null;
+  this.pendingTaskData = null;
+  
+  this.pool.push(result);
+  if (!this.full()) {
+    this.source.wantData();
+  }
+  this.onData();
+};
+/** onTaskFinish variant that doesn't require scope. */
+PwnFiler.TaskQueue.prototype.unboundOnTaskFinish = null;
+
+/** Called when data is available to be popped from the queue. */
+PwnFiler.TaskQueue.prototype.onData = function () { };
+
+/** Indicates a desire to pop data, calls onData when data is available. */
+PwnFiler.TaskQueue.prototype.wantData = function () {
+  if (!this.empty()) {
+    this.onData();
+    return;
+  }
+  if (!this.pendingOp && !this.full()) {
+    this.source.wantData();
+  }
+};
 /** Keeps track of the files that the user has selected. */
 
 /**
@@ -233,9 +501,18 @@ PwnFiler.dataTransferHasFiles = function (data) {
  * 
  * @param selection DOM element that will display the files selected for upload
  */
-PwnFiler.prototype.initSelection = function (selection) {
+PwnFiler.prototype.initSelection = function (selection, commitButton) {
   this.selection = [];
   this.selectionDom = selection;
+  this.commitButton = commitButton;
+  if (this.commitButton) {
+    this.commitButton.setAttribute('disabled', 'disabled');
+    
+    var filer = this;
+    this.commitButton.addEventListener('click', function (event) {
+      return filer.onCommitClick(event);
+    });
+  }
 };
 
 /** Called when the user selects one or more files for uploading. */
@@ -252,8 +529,7 @@ PwnFiler.prototype.onFileSelect = function (files) {
   }
 
   if (!this.multiple) {
-    // Commit upload.
-    return;
+    this.commitUpload();
   }
 };
 
@@ -268,6 +544,9 @@ PwnFiler.prototype.addFile = function (file) {
   var newFile = {domFile: file};
   this.selection.push(newFile);
   this.selectionDom.appendChild(this.buildFileSelectionDom(newFile));
+  if (this.commitButton) {
+    this.commitButton.removeAttribute('disabled');
+  }
 };
 
 /** Removes the file at a given position in the upload list. */
@@ -280,6 +559,10 @@ PwnFiler.prototype.removeFile = function (fileData) {
   }
   this.selection.splice(index, 1);
   this.selectionDom.removeChild(fileData.selectionDom);
+  
+  if (this.commitButton && this.selection.length === 0) {
+    this.commitButton.setAttribute('disabled', 'disabled');
+  }
   
   // TODO: cancel any in-progress upload
 };
@@ -334,39 +617,15 @@ PwnFiler.prototype.removeClickListener = function (fileData) {
     return false;
   };
 };
-/** Upload sketch. */
-PwnFiler.prototype.pumpFiles = function (files) {
-  if (files) {
-    var file = files[0];
-    this.currentFile = file[0];
-    $('#upload-file-name').text(file.name + " " + file.size + " " + file.type);
-    
-    var blob = file;
-    var start = file.size * 0.9;
-    var length = 128 * 1024;
-    if (file.slice) {
-      blob = file.slice(start, length, file.type);
-    } else if (file.mozSlice) {
-      blob = file.mozSlice(start, start + length, file.type);
-    } else if (file.webkitSlice) {
-      blob = file.webkitSlice(start, start + length, file.type);
-    } else {
-      $('#upload-file-name').text('no File.slice support; reading whole file');
-    }
-    
-    var reader = new FileReader();
-    reader.onloadend = function (event) {
-      if (event.target.readyState !== FileReader.DONE) {
-        return;
-      }
-      var data = event.target.result;
-      $('#status-text').text('read ' + data.length + ' bytes');
-    };
-    
-    reader.readAsBinaryString(blob);
-  } else {
-    $('#upload-file-name').text('none');
-  }
+
+/** Called when the user presses on the commit upload button. */
+PwnFiler.prototype.onCommitClick = function (event) {
+  this.commitUpload();
+  event.preventDefault();
+  return false;
 };
-/** The file to be uploaded. */
-PwnFiler.prototype.currentFile = null;
+
+/** Starts uploading the files selected by the user. */
+PwnFiler.prototype.commitUpload = function () {
+  
+};

@@ -2,20 +2,23 @@
  * Executes an asynchronous task, and buffers a fixed amount of results.
  * 
  * @param sourceQueue the queue that feeds data into this queue; can be null
- * @param task object that encapsulates the asynchronous task to be executed;
+ * @param createTask function(input, callback) that returns a running
+ *                   asynchronous task which can be aborted by calling cancel()
+ *                   on it; upon completion, the task will call callback(result)
  * @param poolSize number of results to be cached (defaults to 1)
  */
-PwnFiler.TaskQueue = function (sourceQueue, task, poolSize) {
+PwnFiler.TaskQueue = function (sourceQueue, createTask, poolSize) {
   this.pool = [];  // Results from completed tasks. 
   this.poolSize = poolSize || 1;
   this.pendingTask = null;  // Running task.
   this.pendingTaskData = null;  // The input given to the running task.
   this.source = sourceQueue;
+  this.createTask = createTask;
   
   var queue = this;
   this.unboundOnTaskFinish = function (result) {
     this.onTaskFinish(result);
-  }
+  };
   this.unboundOnSourceData = function () {
     queue.onSourceData();
   };
@@ -50,8 +53,8 @@ PwnFiler.TaskQueue.prototype.onSourceData = function () {
   }
   
   this.pendingTaskData = this.source.pop();
-  this.pendingTask = new this.task(this.pendingTaskData,
-                                   this.unboundOnTaskFinish);
+  this.pendingTask = this.createTask(this.pendingTaskData,
+                                     this.unboundOnTaskFinish);
 };
 /** onSourceData variant that doesn't require scope. */
 PwnFiler.TaskQueue.prototype.unboundOnSourceData = null;
