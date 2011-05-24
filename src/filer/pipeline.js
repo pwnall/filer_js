@@ -1,20 +1,32 @@
-/** Manages the upload pipeline. */
+/** The components and topology of the upload pipeline. */
 
 /**
  * Sets up the upload pipeline.
  * 
- * @param
+ * @param uploadUrl root URL for uploading chunks of a file
  * @param options optional flags for tweaking the pipeline performance
  */
-PwnFiler.prototype.initPipeline = function (options) {
+PwnFiler.prototype.initPipeline = function (uploadUrl, options) {
   var pipeline = this.pipeline = {};
   pipeline.blockQ = new PwnFiler.BlockQueue(options.blockSize || 1024 * 1024);
   pipeline.readQ = new PwnFiler.TaskQueue(pipeline.blockQ,
-      PwnFiler.ReadQueue.create, options.readQueueSize || 5);
+      PwnFiler.ReadTask.create, options.readQueueSize || 5);
   pipeline.hashQ = new PwnFiler.TaskQueue(pipeline.readQ,
-      PwnFiler.TaskQueue.create, options.hashQueueSize || 5);
-  pipeline.sendQ = new PwnFiler.SendQueue(pipeline.sendQ,
-      PwnFiler.UploadTask.create, 1);
+      PwnFiler.HashTask.create(this), options.hashQueueSize || 5);
+  pipeline.sendQ = new PwnFiler.TaskQueue(pipeline.hashQ,
+      PwnFiler.UploadTask.create(uploadUrl, function () {}), 1);
+  var drainTask = PwnFiler.DrainTask.create([pipeline.blockQ, pipeline.readQ,
+      pipeline.hashQ, pipeline.sendQ, pipeline.drain]);
+  pipeline.drain = new PwnFiler.TaskQueue(pipeline.sendQ,
+      drainTask, 1);
+};
+
+/** Adds a bunch of files to the upload pipeline and kicks it off. */
+PwnFiler.prototype.pipelineFiles = function (filesData) {
+  for (var i = 0; i < filesData.length; i += 1) {
+    this.pipeline.blockQ.push(filesData[i]);
+  }
+  this.pipeline.drain.wantData();
 };
 
 /** Special queue that takes files and breaks them up into blobs. */
@@ -26,12 +38,13 @@ PwnFiler.BlockQueue = function (blockSize) {
 };
 /** Pushes a file into the queue. */
 PwnFiler.BlockQueue.prototype.push = function (fileData) {
-  var fileId = sjcl.hash.sha256.hash(fileData.domFile.name);
+  var fileId =
+      sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(fileData.domFile.name));
   this.files.push({fileData: fileData, fileId: fileId});
 };
 /** True if there is nothing to pop from the queue. */
 PwnFiler.BlockQueue.prototype.empty = function () {
-  return this.currentFile > this.files.length;
+  return this.currentFile >= this.files.length;
 };
 /** A blob data object to be read, or null if the queue is empty. */
 PwnFiler.BlockQueue.prototype.pop = function () {
@@ -39,7 +52,9 @@ PwnFiler.BlockQueue.prototype.pop = function () {
     return null;
   }
   
-  var blobData = this.files[this.currentFile];
+  var sourceData = this.files[this.currentFile];
+  // NOTE: cloning the file data to do per-blob changes.
+  var blobData = {fileData: sourceData.fileData, fileId: sourceData.fileId};
   var file = blobData.fileData.domFile;
   var bytesLeft = file.size - this.currentOffset;
   var blockSize = Math.min(this.blockSize, bytesLeft);
@@ -61,10 +76,14 @@ PwnFiler.BlockQueue.prototype.pop = function () {
   
   this.currentOffset += blockSize;
   if (file.size <= this.currentOffset) {
+    blobData.last = true;
     this.currentOffset = 0;
     this.currentFile += 1;
+  } else {
+    blobData.last = false;
   }
   
+  console.log(blobData);
   return blobData;
 };
 /** Indicates a desire to pop data, calls onData when data is available. */
@@ -108,21 +127,37 @@ PwnFiler.ReadTask.prototype.cancel = function (event) {
 };
 
 /** Computes a cryptographic hash for a blob (file fragment). */
-PwnFiler.HashTask = function (blobData, callback) {
+PwnFiler.HashTask = function (filer, blobData, callback) {
   this.blobData = blobData;
   this.callback = callback;
   
-  // TODO(pwnall): run the computation in a Web worker
-  this.blobData.hashId = sjcl.hash.sha256.hash(this.blobData.binaryData);
-  this.callback(this.blobData);
+  var task = this;
+  filer.inWorker('PwnFiler.HashTask.hashData', this.blobData.binaryData,
+                function (result) {
+    if (task.blobData === null) {
+      return;
+    }
+    task.blobData.hashId = result;
+    task.callback(task.blobData);
+  });
 };
 /** Creates a HashTask instance. */
-PwnFiler.HashTask.create = function (blobData, callback) {
-  return new PwnFiler.HashTask(blobData, callback);
+PwnFiler.HashTask.create = function (filer) {
+  return function (blobData, callback) {
+    return new PwnFiler.HashTask(filer, blobData, callback);
+  };
 };
 /** File hashing cannot be aborted. */
 PwnFiler.HashTask.prototype.cancel = function () {
-  return;
+  this.blobData = null;
+};
+/**
+ * Hashes its argument.
+ * 
+ * This is computationally intensive and should not be run in the main thread.
+ */
+PwnFiler.HashTask.hashData = function (data) {
+  return sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(data));
 };
 
 /** Uploads a blob (file fragment) to a server. */
@@ -136,21 +171,21 @@ PwnFiler.UploadTask = function (backendUrl, progressCallback, blobData,
   xhr.onprogress = function (event) {
     
   };
-  xhr.onloadend = function (event) {
+  xhr.onloadend = xhr.onload = xhr.onerror = function (event) {
     if (event.target.readyState !== XMLHttpRequest.DONE ||
-        this.blobData === null) {
+        task.blobData === null) {
       return true;
     }
     var result = task.blobData;
     task.blobData = null;
-    result.binaryData = event.target.result;
     task.finishCallback(result);
   };
   xhr.open('POST', backendUrl + '/' + blobData.hashId, true);
   xhr.setRequestHeader('X-Filer-Start', blobData.start);
+  xhr.setRequestHeader('X-Filer-Last', blobData.last.toString());
   xhr.setRequestHeader('X-Filer-ID', blobData.fileId);
   xhr.setRequestHeader('Content-Type', blobData.blob.mimeType);
-  xhr.send(blobData.binaryData);
+  xhr.send(blobData.blob);
 };
 /** Creates an UploadTask constructor. */
 PwnFiler.UploadTask.create = function (backendUrl, progressCallback) {
@@ -168,9 +203,19 @@ PwnFiler.UploadTask.prototype.cancel = function (event) {
   this.xhr.abort();
 };
 
-PwnFiler.QueueTask = function(allQueues, sourceQueue) {
+/** Pops data out of a queue while there is activity in a chain of queues. */
+PwnFiler.DrainTask = function (allQueues, sourceQueue, callback) {
+  this.done = false;
+  this.allQueues = allQueues;
+  this.sourceQueue = sourceQueue;
+  this.callback = callback;
   
+  callback(null);
 };
-PwnFiler.QueueTask.create = function(allQueues) {
-  
+PwnFiler.DrainTask.create = function (allQueues) {
+  return function (sourceQueue, callback) {
+    return new PwnFiler.DrainTask(allQueues, sourceQueue, callback);
+  };
 };
+/** True if none of the queues can produce more output.*/
+PwnFiler.DrainTask.prototype.done = false;

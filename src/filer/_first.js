@@ -1,5 +1,8 @@
-/*jslint white: true, undef: true, newcap: true, nomen: false, onevar: false, regexp: false, plusplus: true, bitwise: true, maxlen: 80, indent: 2 */
-/*global console, document, window, Element, FileReader, sjcl, XMLHttpRequest */
+/*jslint white: true, undef: true, newcap: true, nomen: false, onevar: false,
+         regexp: false, plusplus: true, bitwise: true, evil: true, maxlen: 80,
+         indent: 2 */
+/*global console, document, window, Element, FileReader, sjcl, XMLHttpRequest,
+         Worker */
 
 /* This file is concatenated first in the big JS file. */
 
@@ -20,6 +23,7 @@
  *   * selection: CSS selector or DOM element for list that displays selected
  *                files (should be an 'ol' or 'ul' element)
  *   * blockUploadUrl: backend URL for uploading file fragments
+ *   * workerUrl: URL for the filer-worker.min.js stub for Web Workers
  */
 var PwnFiler = PwnFiler || function (options) {
   options = options || {};
@@ -64,4 +68,5 @@ var PwnFiler = PwnFiler || function (options) {
   }
   
   this.initPipeline(options.blockUploadUrl, options.pipeline || {});
+  this.initWorkers(options.workerUrl);
 };

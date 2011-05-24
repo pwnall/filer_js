@@ -8,25 +8,35 @@ rescue Bundler::BundlerError => e
   $stderr.puts "Run `bundle install` to install missing gems"
   exit e.status_code
 end
+require 'fileutils'
 require 'rake'
 
 # Output directory.
 directory 'bin'
 
-# Development binary.
+# Development binaries.
 file 'bin/filer.js' => Dir['src/filer/*.js'].sort do
-  File.unlink 'bin/filer.js'
   Kernel.system 'cat src/filer/*.js  > bin/filer.js'
 end
-file 'bin/filer.min.js' => ['bin']
+file 'bin/filer.js' => ['bin']
+file 'bin/filer-worker.js' => Dir['src/filer-worker/*.js'].sort do
+  Kernel.system 'cat src/filer-worker/*.js  > bin/filer-worker.js'
+end
+file 'bin/filer-worker.js' => ['bin']
 
 # Production binaries.
 file 'bin/filer.min.js' => 'bin/filer.js' do
   Kernel.system 'juicer merge --force bin/filer.js'
+  merged_binary = File.read('bin/filer.min.js') +
+                  File.read('vendor/sjcl.min.js')
+  File.open('bin/filer.min.js', 'w') { |f| f.write merged_binary }
+end
+file 'bin/filer-worker.min.js' => 'bin/filer-worker.js' do
+  Kernel.system 'juicer merge --force bin/filer-worker.js'
 end
 
 # Build tasks.
-task :build => ['bin/filer.min.js']
+task :build => ['bin/filer.min.js', 'bin/filer-worker.min.js']
 task :default => [:build, :large_files]
 
 # Generate files for the upload test.

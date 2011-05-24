@@ -17,7 +17,7 @@ PwnFiler.TaskQueue = function (sourceQueue, createTask, poolSize) {
   
   var queue = this;
   this.unboundOnTaskFinish = function (result) {
-    this.onTaskFinish(result);
+    queue.onTaskFinish(result);
   };
   this.unboundOnSourceData = function () {
     queue.onSourceData();
@@ -53,8 +53,13 @@ PwnFiler.TaskQueue.prototype.onSourceData = function () {
   }
   
   this.pendingTaskData = this.source.pop();
-  this.pendingTask = this.createTask(this.pendingTaskData,
-                                     this.unboundOnTaskFinish);
+  this.pendingTask = true;
+  var newTask = this.createTask(this.pendingTaskData,
+                                this.unboundOnTaskFinish);
+  // This test fails if the task completes in the constructor.
+  if (this.pendingTask === true) {
+    this.pendingTask = newTask;
+  }
 };
 /** onSourceData variant that doesn't require scope. */
 PwnFiler.TaskQueue.prototype.unboundOnSourceData = null;
@@ -64,7 +69,9 @@ PwnFiler.TaskQueue.prototype.onTaskFinish = function (result) {
   this.pendingTask = null;
   this.pendingTaskData = null;
   
-  this.pool.push(result);
+  if (result !== null) {
+    this.pool.push(result);
+  }
   if (!this.full()) {
     this.source.wantData();
   }

@@ -131,5 +131,5 @@ PwnFiler.prototype.onCommitClick = function (event) {
 
 /** Starts uploading the files selected by the user. */
 PwnFiler.prototype.commitUpload = function () {
-  
+  this.pipelineFiles(this.selection);
 };
