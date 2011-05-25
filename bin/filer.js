@@ -675,84 +675,111 @@ PwnFiler.prototype.onCommitClick = function (event) {
 PwnFiler.prototype.commitUpload = function () {
   this.pipelineFiles(this.selection);
 };
-/** Uploads a blob (file fragment) to a server. */
+/** Uploads a blob (file fragment) to the server. */
 PwnFiler.UploadTask = function (uploadUrl, progressCallback, blobData,
                                 finishCallback) {
+  this.uploadUrl = uploadUrl;
   this.blobData = blobData;
   this.progressCallback = progressCallback;
   this.finishCallback = finishCallback;
+  
+  this.checkChunk();
+};
+
+/** Verifies if a chunk exists on the server, to avoid re-uploading. */
+PwnFiler.UploadTask.prototype.checkChunk = function () {
   var xhr = new XMLHttpRequest();
   this.xhr = xhr;
+  
   var task = this;
-  xhr.upload.onprogress = function (event) {
-    if (event.loaded) {
-      task.progressCallback(blobData, event.loaded);
-    }
-  };
   var loadHandler = function (event) {
-    return task.onLoadEnd(event);
+    return task.onChunkLoadEnd(event);
   };
   xhr.onloadend = loadHandler;
   xhr.onerror = loadHandler;
   xhr.onload = loadHandler;
-  PwnFiler.UploadTask.xhrSend(xhr, blobData, uploadUrl);
+
+  var blobData = this.blobData;
+  xhr.open('PUT', this.uploadUrl, true);
+  xhr.setRequestHeader('X-PwnFiler-FileID', blobData.fileId);
+  xhr.setRequestHeader('X-PwnFiler-Hash', blobData.hashId);
+  xhr.setRequestHeader('X-PwnFiler-Start', blobData.start);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.send(JSON.stringify({fileSize: blobData.fileSize,
+      mimeType: blobData.blob.type || 'application/octet-stream'}));
 };
 
-/** Called when the XHR completes, either successfully or with an error. */
-PwnFiler.UploadTask.prototype.onLoadEnd = function (event) {
+/** Called when the check XHR completes, successfully or with an error. */
+PwnFiler.UploadTask.prototype.onChunkLoadEnd = function (event) {
   if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
       this.blobData === null) {
     return true;
   }
   if (event.target.status === 200) {
-    var result = this.blobData;
-    this.blobData = null;
-    this.progressCallback(result, result.binaryData.length);
-    this.finishCallback(result);
+    var response = JSON.parse(event.target.response);
+    
+    if (response.present) {
+      this.onXhrCompletion();
+    } else {
+      this.uploadChunk();
+    }
     return true;
   }
-  // TODO(pwnall): transport error, retry
+  // TODO(pwnall): report unrecoverable error
   return true;
 };
 
-/**
- * Sets up an XHR to upload binary data.
- * 
- * @param xhr a XmlHttpRequest object
- * @param blobData pipeline data block that contains the raw binary data in 
- *                 the binaryData property
- * @param uploadUrl root URL for uploading chunks of a file
- */
-PwnFiler.UploadTask.xhrSend = function (xhr, blobData, uploadUrl) {
-  xhr.open('POST', uploadUrl + '/' + blobData.hashId, true);
-  xhr.setRequestHeader('X-Filer-Start', blobData.start);
-  xhr.setRequestHeader('X-Filer-Size', blobData.fileSize);
-  xhr.setRequestHeader('X-Filer-ID', blobData.fileId);
-  xhr.setRequestHeader('Content-Type', blobData.blob.type ||
-                                       'application/octet-stream');
-  
-  var data = blobData.binaryData;
-  if (true) {
-    // Assumes the browser is smart enough to avoid doing the disk I/O twice.
-    xhr.send(blobData.blob);
-  } else {
-    if (xhr.sendAsBinary) {
-      // Firefox 4 supports this, but not BlobBuilder.
-      xhr.sendAsBinary(data);
-    } else {
-      var length = data.length;
-      var buffer = new ArrayBuffer(data.length);
-      var bytes = new Uint8Array(buffer, 0);
-      for (var i = 0; i < length; i += 1) {
-        bytes[i] = data.charCodeAt(i);
-      }
-      
-      var builderClass = window.BlobBuilder || window.WebKitBlobBuilder;
-      var builder = new builderClass();
-      builder.append(buffer);
-      xhr.send(builder.getBlob());
+/** Uploads chunk contents that presumably does not exist on the server. */
+PwnFiler.UploadTask.prototype.uploadChunk = function () {
+  var xhr = new XMLHttpRequest();
+  this.xhr = xhr;
+
+  var task = this;
+  xhr.upload.onprogress = function (event) {
+    if (event.loaded) {
+      task.progressCallback(task.blobData, event.loaded);
     }
+  };
+  var loadHandler = function (event) {
+    return task.onUploadLoadEnd(event);
+  };
+  xhr.onloadend = loadHandler;
+  xhr.onerror = loadHandler;
+  xhr.onload = loadHandler;
+
+  var blobData = this.blobData;
+  xhr.open('POST', this.uploadUrl, true);
+  xhr.setRequestHeader('X-PwnFiler-FileID', blobData.fileId);
+  xhr.setRequestHeader('X-PwnFiler-Hash', blobData.hashId);
+  xhr.setRequestHeader('X-PwnFiler-Start', blobData.start);
+  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+  xhr.send(blobData.binaryData);
+};
+
+/** Called when the upload XHR completes, successfully or with an error. */
+PwnFiler.UploadTask.prototype.onUploadLoadEnd = function (event) {
+  if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
+      this.blobData === null) {
+    return true;
   }
+  if (event.target.status === 200) {
+    this.onXhrCompletion();
+    return true;
+  } else if (event.target.status === 400) {
+    // Data must have been corrupted in transit. Retry.
+    this.uploadChunk();
+    return true;
+  }
+  // TODO(pwnall): report unrecoverable error
+  return true;
+};
+
+/** Called when all the necessary XHRs complete successfully. */
+PwnFiler.UploadTask.prototype.onXhrCompletion = function () {
+  var result = this.blobData;
+  this.blobData = null;
+  this.progressCallback(result, result.binaryData.length);
+  this.finishCallback(result);
 };
 
 /** Creates an UploadTask constructor. */
