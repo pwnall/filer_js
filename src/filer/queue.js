@@ -39,7 +39,7 @@ PwnFiler.TaskQueue.prototype.full = function () {
 
 /** A blob contents object, or null if the queue is empty. */
 PwnFiler.TaskQueue.prototype.pop = function () {
-  var returnValue = this.empty() ? null : this.pool.pop();
+  var returnValue = this.empty() ? null : this.pool.shift();
   if (!this.full()) {
     this.source.wantData();
   }

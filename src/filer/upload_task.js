@@ -2,31 +2,42 @@
 PwnFiler.UploadTask = function (uploadUrl, progressCallback, blobData,
                                 finishCallback) {
   this.blobData = blobData;
+  this.progressCallback = progressCallback;
   this.finishCallback = finishCallback;
   var xhr = new XMLHttpRequest();
   this.xhr = xhr;
   var task = this;
-  xhr.onprogress = function (event) {
-    
+  xhr.upload.onprogress = function (event) {
+    if (event.loaded) {
+      task.progressCallback(blobData, event.loaded);
+    }
   };
   var loadHandler = function (event) {
-    if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
-        task.blobData === null) {
-      return true;
-    }
-    if (event.target.status === 200) {
-      var result = task.blobData;
-      task.blobData = null;
-      task.finishCallback(result);
-      return;
-    }
-    // TODO(pwnall): transport error, retry
+    return task.onLoadEnd(event);
   };
   xhr.onloadend = loadHandler;
   xhr.onerror = loadHandler;
   xhr.onload = loadHandler;
   PwnFiler.UploadTask.xhrSend(xhr, blobData, uploadUrl);
 };
+
+/** Called when the XHR completes, either successfully or with an error. */
+PwnFiler.UploadTask.prototype.onLoadEnd = function (event) {
+  if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
+      this.blobData === null) {
+    return true;
+  }
+  if (event.target.status === 200) {
+    var result = this.blobData;
+    this.blobData = null;
+    this.progressCallback(result, result.binaryData.length);
+    this.finishCallback(result);
+    return true;
+  }
+  // TODO(pwnall): transport error, retry
+  return true;
+};
+
 /**
  * Sets up an XHR to upload binary data.
  * 
@@ -74,6 +85,7 @@ PwnFiler.UploadTask.create = function (uploadUrl, progressCallback) {
                                    callback);
   };
 };
+
 /** Cancels a partial file read task. */
 PwnFiler.UploadTask.prototype.cancel = function (event) {
   if (this.blobData === null) {

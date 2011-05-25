@@ -54,8 +54,6 @@ PwnFiler.BlockQueue.prototype.pop = function () {
   } else {
     blobData.last = false;
   }
-  
-  console.log(blobData);
   return blobData;
 };
 /** Indicates a desire to pop data, calls onData when data is available. */

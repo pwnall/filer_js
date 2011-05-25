@@ -13,8 +13,12 @@ PwnFiler.prototype.initPipeline = function (uploadUrl, options) {
       PwnFiler.ReadTask.create, options.readQueueSize || 5);
   pipeline.hashQ = new PwnFiler.TaskQueue(pipeline.readQ,
       PwnFiler.HashTask.create(this), options.hashQueueSize || 5);
+  var filer = this;
+  var onProgress = function (blobData, blockSent) {
+    filer.onPipelineProgress(blobData, blockSent);
+  };
   pipeline.sendQ = new PwnFiler.TaskQueue(pipeline.hashQ,
-      PwnFiler.UploadTask.create(uploadUrl, function () {}), 1);
+      PwnFiler.UploadTask.create(uploadUrl, onProgress), 1);
   var drainTask = PwnFiler.DrainTask.create([pipeline.blockQ, pipeline.readQ,
       pipeline.hashQ, pipeline.sendQ, pipeline.drain]);
   pipeline.drain = new PwnFiler.TaskQueue(pipeline.sendQ,
@@ -27,6 +31,18 @@ PwnFiler.prototype.pipelineFiles = function (filesData) {
     this.pipeline.blockQ.push(filesData[i]);
   }
   this.pipeline.drain.wantData();
+};
+
+/** Uploads the progress meter when an XHR upload makes progress. */
+PwnFiler.prototype.onPipelineProgress = function (blobData, blockSent) {
+  var totalSent = blobData.start + blockSent;
+  var progressDom = blobData.fileData.progressDom;
+  progressDom.setAttribute('value', totalSent);
+};
+
+/** Called when the pipeline is drained. */
+PwnFiler.prototype.onPipelineDrain = function () {
+  
 };
 
 /** Pops data out of a queue while there is activity in a chain of queues. */

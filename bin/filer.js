@@ -300,8 +300,12 @@ PwnFiler.prototype.initPipeline = function (uploadUrl, options) {
       PwnFiler.ReadTask.create, options.readQueueSize || 5);
   pipeline.hashQ = new PwnFiler.TaskQueue(pipeline.readQ,
       PwnFiler.HashTask.create(this), options.hashQueueSize || 5);
+  var filer = this;
+  var onProgress = function (blobData, blockSent) {
+    filer.onPipelineProgress(blobData, blockSent);
+  };
   pipeline.sendQ = new PwnFiler.TaskQueue(pipeline.hashQ,
-      PwnFiler.UploadTask.create(uploadUrl, function () {}), 1);
+      PwnFiler.UploadTask.create(uploadUrl, onProgress), 1);
   var drainTask = PwnFiler.DrainTask.create([pipeline.blockQ, pipeline.readQ,
       pipeline.hashQ, pipeline.sendQ, pipeline.drain]);
   pipeline.drain = new PwnFiler.TaskQueue(pipeline.sendQ,
@@ -314,6 +318,18 @@ PwnFiler.prototype.pipelineFiles = function (filesData) {
     this.pipeline.blockQ.push(filesData[i]);
   }
   this.pipeline.drain.wantData();
+};
+
+/** Uploads the progress meter when an XHR upload makes progress. */
+PwnFiler.prototype.onPipelineProgress = function (blobData, blockSent) {
+  var totalSent = blobData.start + blockSent;
+  var progressDom = blobData.fileData.progressDom;
+  progressDom.setAttribute('value', totalSent);
+};
+
+/** Called when the pipeline is drained. */
+PwnFiler.prototype.onPipelineDrain = function () {
+  
 };
 
 /** Pops data out of a queue while there is activity in a chain of queues. */
@@ -373,7 +389,7 @@ PwnFiler.TaskQueue.prototype.full = function () {
 
 /** A blob contents object, or null if the queue is empty. */
 PwnFiler.TaskQueue.prototype.pop = function () {
-  var returnValue = this.empty() ? null : this.pool.pop();
+  var returnValue = this.empty() ? null : this.pool.shift();
   if (!this.full()) {
     this.source.wantData();
   }
@@ -483,8 +499,6 @@ PwnFiler.BlockQueue.prototype.pop = function () {
   } else {
     blobData.last = false;
   }
-  
-  console.log(blobData);
   return blobData;
 };
 /** Indicates a desire to pop data, calls onData when data is available. */
@@ -665,31 +679,42 @@ PwnFiler.prototype.commitUpload = function () {
 PwnFiler.UploadTask = function (uploadUrl, progressCallback, blobData,
                                 finishCallback) {
   this.blobData = blobData;
+  this.progressCallback = progressCallback;
   this.finishCallback = finishCallback;
   var xhr = new XMLHttpRequest();
   this.xhr = xhr;
   var task = this;
-  xhr.onprogress = function (event) {
-    
+  xhr.upload.onprogress = function (event) {
+    if (event.loaded) {
+      task.progressCallback(blobData, event.loaded);
+    }
   };
   var loadHandler = function (event) {
-    if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
-        task.blobData === null) {
-      return true;
-    }
-    if (event.target.status === 200) {
-      var result = task.blobData;
-      task.blobData = null;
-      task.finishCallback(result);
-      return;
-    }
-    // TODO(pwnall): transport error, retry
+    return task.onLoadEnd(event);
   };
   xhr.onloadend = loadHandler;
   xhr.onerror = loadHandler;
   xhr.onload = loadHandler;
   PwnFiler.UploadTask.xhrSend(xhr, blobData, uploadUrl);
 };
+
+/** Called when the XHR completes, either successfully or with an error. */
+PwnFiler.UploadTask.prototype.onLoadEnd = function (event) {
+  if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
+      this.blobData === null) {
+    return true;
+  }
+  if (event.target.status === 200) {
+    var result = this.blobData;
+    this.blobData = null;
+    this.progressCallback(result, result.binaryData.length);
+    this.finishCallback(result);
+    return true;
+  }
+  // TODO(pwnall): transport error, retry
+  return true;
+};
+
 /**
  * Sets up an XHR to upload binary data.
  * 
@@ -737,6 +762,7 @@ PwnFiler.UploadTask.create = function (uploadUrl, progressCallback) {
                                    callback);
   };
 };
+
 /** Cancels a partial file read task. */
 PwnFiler.UploadTask.prototype.cancel = function (event) {
   if (this.blobData === null) {
