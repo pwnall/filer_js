@@ -1,8 +1,8 @@
-/*jslint white: true, undef: true, newcap: true, nomen: false, onevar: false,
+/*jslint white: true, undef: true, newcap: false, nomen: false, onevar: false,
          regexp: false, plusplus: true, bitwise: true, evil: true, maxlen: 80,
          indent: 2 */
-/*global console, document, window, Element, FileReader, sjcl, XMLHttpRequest,
-         Worker */
+/*global document, sjcl, window, ArrayBuffer, Element, FileReader, Uint8Array,
+         XMLHttpRequest, Worker, console */
 
 /* This file is concatenated first in the big JS file. */
 
@@ -125,6 +125,41 @@ PwnFiler.prototype.onFileInputChange = function (event) {
     this.onFileSelect(files);
   }
   return true;
+};
+/** Computationally-intensive cryptography. */
+
+/** Computes a cryptographic hash for a blob (file fragment). */
+PwnFiler.HashTask = function (filer, blobData, callback) {
+  this.blobData = blobData;
+  this.callback = callback;
+  
+  var task = this;
+  filer.inWorker('PwnFiler.HashTask.hashData', this.blobData.binaryData,
+                function (result) {
+    if (task.blobData === null) {
+      return;
+    }
+    task.blobData.hashId = result;
+    task.callback(task.blobData);
+  });
+};
+/** Creates a HashTask instance. */
+PwnFiler.HashTask.create = function (filer) {
+  return function (blobData, callback) {
+    return new PwnFiler.HashTask(filer, blobData, callback);
+  };
+};
+/** File hashing cannot be aborted. */
+PwnFiler.HashTask.prototype.cancel = function () {
+  this.blobData = null;
+};
+/**
+ * Hashes its argument.
+ * 
+ * This is computationally intensive and should not be run in the main thread.
+ */
+PwnFiler.HashTask.hashData = function (data) {
+  return sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(data));
 };
 /** File drag and drop functionality. */
 
@@ -281,180 +316,6 @@ PwnFiler.prototype.pipelineFiles = function (filesData) {
   this.pipeline.drain.wantData();
 };
 
-/** Special queue that takes files and breaks them up into blobs. */
-PwnFiler.BlockQueue = function (blockSize) {
-  this.blockSize = blockSize;
-  this.files = [];
-  this.currentFile = 0;
-  this.currentOffset = 0;
-};
-/** Pushes a file into the queue. */
-PwnFiler.BlockQueue.prototype.push = function (fileData) {
-  var fileId =
-      sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(fileData.domFile.name));
-  this.files.push({fileData: fileData, fileId: fileId});
-};
-/** True if there is nothing to pop from the queue. */
-PwnFiler.BlockQueue.prototype.empty = function () {
-  return this.currentFile >= this.files.length;
-};
-/** A blob data object to be read, or null if the queue is empty. */
-PwnFiler.BlockQueue.prototype.pop = function () {
-  if (this.empty()) {
-    return null;
-  }
-  
-  var sourceData = this.files[this.currentFile];
-  // NOTE: cloning the file data to do per-blob changes.
-  var blobData = {fileData: sourceData.fileData, fileId: sourceData.fileId};
-  var file = blobData.fileData.domFile;
-  var bytesLeft = file.size - this.currentOffset;
-  var blockSize = Math.min(this.blockSize, bytesLeft);
-  var blob = file;
-  var start = this.currentOffset;
-  if (file.slice) {
-    blob = file.slice(start, blockSize, file.type);
-  } else if (file.mozSlice) {
-    blob = file.mozSlice(start, start + blockSize, file.type);
-  } else if (file.webkitSlice) {
-    blob = file.webkitSlice(start, start + blockSize, file.type);
-  } else {
-    // No slice support, reading in the whole file.
-    blockSize = bytesLeft;
-    blob = file;
-  }
-  blobData.blob = blob;
-  blobData.start = start;
-  
-  this.currentOffset += blockSize;
-  if (file.size <= this.currentOffset) {
-    blobData.last = true;
-    this.currentOffset = 0;
-    this.currentFile += 1;
-  } else {
-    blobData.last = false;
-  }
-  
-  console.log(blobData);
-  return blobData;
-};
-/** Indicates a desire to pop data, calls onData when data is available. */
-PwnFiler.BlockQueue.prototype.wantData = function () {
-  if (!this.empty()) {
-    this.onData();
-  }
-};
-/** Called when data is available to be popped from the queue. */
-PwnFiler.BlockQueue.prototype.onData = function () { };
-
-/** Reads a blob (file fragment) into memory. */
-PwnFiler.ReadTask = function (blobData, callback) {
-  this.blobData = blobData;
-  this.callback = callback;
-  var reader = new FileReader();
-  this.reader = reader;
-  var task = this;
-  reader.onloadend = function (event) {
-    if (event.target.readyState !== FileReader.DONE || this.blobData === null) {
-      return true;
-    }
-    var result = task.blobData;
-    task.blobData = null;
-    result.binaryData = event.target.result;
-    task.callback(result);
-  };
-  reader.readAsBinaryString(blobData.blob);
-};
-/** Creates a ReadTask instance. */
-PwnFiler.ReadTask.create = function (blobData, callback) {
-  return new PwnFiler.ReadTask(blobData, callback);
-};
-/** Cancels a partial file read task. */
-PwnFiler.ReadTask.prototype.cancel = function (event) {
-  if (this.blobData === null) {
-    return;
-  }
-  this.blobData = null;
-  this.reader.abort();
-};
-
-/** Computes a cryptographic hash for a blob (file fragment). */
-PwnFiler.HashTask = function (filer, blobData, callback) {
-  this.blobData = blobData;
-  this.callback = callback;
-  
-  var task = this;
-  filer.inWorker('PwnFiler.HashTask.hashData', this.blobData.binaryData,
-                function (result) {
-    if (task.blobData === null) {
-      return;
-    }
-    task.blobData.hashId = result;
-    task.callback(task.blobData);
-  });
-};
-/** Creates a HashTask instance. */
-PwnFiler.HashTask.create = function (filer) {
-  return function (blobData, callback) {
-    return new PwnFiler.HashTask(filer, blobData, callback);
-  };
-};
-/** File hashing cannot be aborted. */
-PwnFiler.HashTask.prototype.cancel = function () {
-  this.blobData = null;
-};
-/**
- * Hashes its argument.
- * 
- * This is computationally intensive and should not be run in the main thread.
- */
-PwnFiler.HashTask.hashData = function (data) {
-  return sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(data));
-};
-
-/** Uploads a blob (file fragment) to a server. */
-PwnFiler.UploadTask = function (backendUrl, progressCallback, blobData,
-                                finishCallback) {
-  this.blobData = blobData;
-  this.finishCallback = finishCallback;
-  var xhr = new XMLHttpRequest();
-  this.xhr = xhr;
-  var task = this;
-  xhr.onprogress = function (event) {
-    
-  };
-  xhr.onloadend = xhr.onload = xhr.onerror = function (event) {
-    if (event.target.readyState !== XMLHttpRequest.DONE ||
-        task.blobData === null) {
-      return true;
-    }
-    var result = task.blobData;
-    task.blobData = null;
-    task.finishCallback(result);
-  };
-  xhr.open('POST', backendUrl + '/' + blobData.hashId, true);
-  xhr.setRequestHeader('X-Filer-Start', blobData.start);
-  xhr.setRequestHeader('X-Filer-Last', blobData.last.toString());
-  xhr.setRequestHeader('X-Filer-ID', blobData.fileId);
-  xhr.setRequestHeader('Content-Type', blobData.blob.mimeType);
-  xhr.send(blobData.blob);
-};
-/** Creates an UploadTask constructor. */
-PwnFiler.UploadTask.create = function (backendUrl, progressCallback) {
-  return function (blobData, callback) {
-    return new PwnFiler.UploadTask(backendUrl, progressCallback, blobData,
-                                   callback);
-  };
-};
-/** Cancels a partial file read task. */
-PwnFiler.UploadTask.prototype.cancel = function (event) {
-  if (this.blobData === null) {
-    return;
-  }
-  this.blobData = null;
-  this.xhr.abort();
-};
-
 /** Pops data out of a queue while there is activity in a chain of queues. */
 PwnFiler.DrainTask = function (allQueues, sourceQueue, callback) {
   this.done = false;
@@ -565,6 +426,105 @@ PwnFiler.TaskQueue.prototype.wantData = function () {
   if (!this.pendingOp && !this.full()) {
     this.source.wantData();
   }
+};
+/** Pipeline stages that read a set of files as 1Mb blocks. */
+
+/** Special queue that takes files and breaks them up into blobs. */
+PwnFiler.BlockQueue = function (blockSize) {
+  this.blockSize = blockSize;
+  this.files = [];
+  this.currentFile = 0;
+  this.currentOffset = 0;
+};
+/** Pushes a file into the queue. */
+PwnFiler.BlockQueue.prototype.push = function (fileData) {
+  var fileId =
+      sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(fileData.domFile.name));
+  this.files.push({fileData: fileData, fileId: fileId});
+};
+/** True if there is nothing to pop from the queue. */
+PwnFiler.BlockQueue.prototype.empty = function () {
+  return this.currentFile >= this.files.length;
+};
+/** A blob data object to be read, or null if the queue is empty. */
+PwnFiler.BlockQueue.prototype.pop = function () {
+  if (this.empty()) {
+    return null;
+  }
+  
+  var sourceData = this.files[this.currentFile];
+  // NOTE: cloning the file data to do per-blob changes.
+  var blobData = {fileData: sourceData.fileData, fileId: sourceData.fileId};
+  var file = blobData.fileData.domFile;
+  var bytesLeft = file.size - this.currentOffset;
+  var blockSize = Math.min(this.blockSize, bytesLeft);
+  var blob = file;
+  var start = this.currentOffset;
+  if (file.slice) {
+    blob = file.slice(start, blockSize, file.type);
+  } else if (file.mozSlice) {
+    blob = file.mozSlice(start, start + blockSize, file.type);
+  } else if (file.webkitSlice) {
+    blob = file.webkitSlice(start, start + blockSize, file.type);
+  } else {
+    // No slice support, reading in the whole file.
+    blockSize = bytesLeft;
+    blob = file;
+  }
+  blobData.blob = blob;
+  blobData.start = start;
+  blobData.fileSize = file.size;
+  
+  this.currentOffset += blockSize;
+  if (file.size <= this.currentOffset) {
+    blobData.last = true;
+    this.currentOffset = 0;
+    this.currentFile += 1;
+  } else {
+    blobData.last = false;
+  }
+  
+  console.log(blobData);
+  return blobData;
+};
+/** Indicates a desire to pop data, calls onData when data is available. */
+PwnFiler.BlockQueue.prototype.wantData = function () {
+  if (!this.empty()) {
+    this.onData();
+  }
+};
+/** Called when data is available to be popped from the queue. */
+PwnFiler.BlockQueue.prototype.onData = function () { };
+
+/** Reads a blob (file fragment) into memory. */
+PwnFiler.ReadTask = function (blobData, callback) {
+  this.blobData = blobData;
+  this.callback = callback;
+  var reader = new FileReader();
+  this.reader = reader;
+  var task = this;
+  reader.onloadend = function (event) {
+    if (event.target.readyState !== FileReader.DONE || this.blobData === null) {
+      return true;
+    }
+    var result = task.blobData;
+    task.blobData = null;
+    result.binaryData = event.target.result;
+    task.callback(result);
+  };
+  reader.readAsBinaryString(blobData.blob);
+};
+/** Creates a ReadTask instance. */
+PwnFiler.ReadTask.create = function (blobData, callback) {
+  return new PwnFiler.ReadTask(blobData, callback);
+};
+/** Cancels a partial file read task. */
+PwnFiler.ReadTask.prototype.cancel = function (event) {
+  if (this.blobData === null) {
+    return;
+  }
+  this.blobData = null;
+  this.reader.abort();
 };
 /** Keeps track of the files that the user has selected. */
 
@@ -700,6 +660,90 @@ PwnFiler.prototype.onCommitClick = function (event) {
 /** Starts uploading the files selected by the user. */
 PwnFiler.prototype.commitUpload = function () {
   this.pipelineFiles(this.selection);
+};
+/** Uploads a blob (file fragment) to a server. */
+PwnFiler.UploadTask = function (uploadUrl, progressCallback, blobData,
+                                finishCallback) {
+  this.blobData = blobData;
+  this.finishCallback = finishCallback;
+  var xhr = new XMLHttpRequest();
+  this.xhr = xhr;
+  var task = this;
+  xhr.onprogress = function (event) {
+    
+  };
+  var loadHandler = function (event) {
+    if (event.target.readyState !== (XMLHttpRequest.DONE || 4) ||
+        task.blobData === null) {
+      return true;
+    }
+    if (event.target.status === 200) {
+      var result = task.blobData;
+      task.blobData = null;
+      task.finishCallback(result);
+      return;
+    }
+    // TODO(pwnall): transport error, retry
+  };
+  xhr.onloadend = loadHandler;
+  xhr.onerror = loadHandler;
+  xhr.onload = loadHandler;
+  PwnFiler.UploadTask.xhrSend(xhr, blobData, uploadUrl);
+};
+/**
+ * Sets up an XHR to upload binary data.
+ * 
+ * @param xhr a XmlHttpRequest object
+ * @param blobData pipeline data block that contains the raw binary data in 
+ *                 the binaryData property
+ * @param uploadUrl root URL for uploading chunks of a file
+ */
+PwnFiler.UploadTask.xhrSend = function (xhr, blobData, uploadUrl) {
+  xhr.open('POST', uploadUrl + '/' + blobData.hashId, true);
+  xhr.setRequestHeader('X-Filer-Start', blobData.start);
+  xhr.setRequestHeader('X-Filer-Size', blobData.fileSize);
+  xhr.setRequestHeader('X-Filer-ID', blobData.fileId);
+  xhr.setRequestHeader('Content-Type', blobData.blob.type ||
+                                       'application/octet-stream');
+  
+  var data = blobData.binaryData;
+  if (true) {
+    // Assumes the browser is smart enough to avoid doing the disk I/O twice.
+    xhr.send(blobData.blob);
+  } else {
+    if (xhr.sendAsBinary) {
+      // Firefox 4 supports this, but not BlobBuilder.
+      xhr.sendAsBinary(data);
+    } else {
+      var length = data.length;
+      var buffer = new ArrayBuffer(data.length);
+      var bytes = new Uint8Array(buffer, 0);
+      for (var i = 0; i < length; i += 1) {
+        bytes[i] = data.charCodeAt(i);
+      }
+      
+      var builderClass = window.BlobBuilder || window.WebKitBlobBuilder;
+      var builder = new builderClass();
+      builder.append(buffer);
+      xhr.send(builder.getBlob());
+    }
+  }
+};
+
+/** Creates an UploadTask constructor. */
+PwnFiler.UploadTask.create = function (uploadUrl, progressCallback) {
+  return function (blobData, callback) {
+    return new PwnFiler.UploadTask(uploadUrl, progressCallback, blobData,
+                                   callback);
+  };
+};
+/** Cancels a partial file read task. */
+PwnFiler.UploadTask.prototype.cancel = function (event) {
+  if (this.blobData === null) {
+    return;
+  }
+  this.blobData = null;
+  this.xhr.abort();
 };
 /** Worker threads using Web Workers. */
 

@@ -7,8 +7,9 @@ require 'rubygems'
 require 'sass'
 require 'sinatra'
 
-# Create the data folder.
+# Create the data folders.
 FileUtils.mkdir_p 'test/blobs'
+FileUtils.mkdir_p 'test/chunks'
 
 # Serve templates from the same folder.
 set :views, File.dirname(__FILE__)
@@ -33,7 +34,13 @@ end
 
 # Upload a fragment of a file.
 post '/chunks/:id' do
-  
+  data = request.body.read
+  digest = OpenSSL::Digest::SHA256.hexdigest data
+  if digest != params[:id]
+    halt 400, 'Content hash does not match'
+    return
+  end
+  File.open("test/chunks/#{params[:id]}", 'w') { |f| f.write data }
 end
 
 # Get a file's metadata.

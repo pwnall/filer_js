@@ -1,8 +1,8 @@
-/*jslint white: true, undef: true, newcap: true, nomen: false, onevar: false,
+/*jslint white: true, undef: true, newcap: false, nomen: false, onevar: false,
          regexp: false, plusplus: true, bitwise: true, evil: true, maxlen: 80,
          indent: 2 */
-/*global console, document, window, Element, FileReader, sjcl, XMLHttpRequest,
-         Worker */
+/*global document, sjcl, window, ArrayBuffer, Element, FileReader, Uint8Array,
+         XMLHttpRequest, Worker, console */
 
 /* This file is concatenated first in the big JS file. */
 
