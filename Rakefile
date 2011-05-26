@@ -25,7 +25,7 @@ end
 file 'bin/filer-worker.js' => ['bin']
 
 # Production binaries.
-file 'bin/filer.min.js' => 'bin/filer.js' do
+file 'bin/filer.min.js' => ['bin/filer.js', 'vendor/sjcl.min.js']  do
   Kernel.system 'juicer merge --force bin/filer.js'
   merged_binary = File.read('bin/filer.min.js') +
                   File.read('vendor/sjcl.min.js')
