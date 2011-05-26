@@ -1,8 +1,8 @@
 /*jslint white: true, undef: true, newcap: false, nomen: false, onevar: false,
-         regexp: false, plusplus: true, bitwise: true, evil: true, maxlen: 80,
+         regexp: false, plusplus: true, bitwise: true, evil: false, maxlen: 80,
          indent: 2 */
-/*global document, sjcl, window, ArrayBuffer, Element, FileReader, Uint8Array,
-         XMLHttpRequest, Worker, console */
+/*global document, self, sjcl, window, ArrayBuffer, Element, FileReader,
+         Uint8Array, XMLHttpRequest, Worker, console */
 
 /* This file is concatenated first in the big JS file. */
 
@@ -24,6 +24,7 @@
  *                files (should be an 'ol' or 'ul' element)
  *   * blockUploadUrl: backend URL for uploading file fragments
  *   * workerUrl: URL for the filer-worker.min.js stub for Web Workers
+ *   * hasher: name of sjcl class for crypto hashes (e.g. "sjcl.hash.sha256")
  */
 var PwnFiler = PwnFiler || function (options) {
   options = options || {};
@@ -67,6 +68,8 @@ var PwnFiler = PwnFiler || function (options) {
     throw "Missing file selection display";
   }
   
-  this.initPipeline(options.blockUploadUrl, options.pipeline || {});
+  this.initPipeline(options.blockUploadUrl,
+                    options.hasher || 'sjcl.hash.sha256',
+                    options.pipeline || {});
   this.initWorkers(options.workerUrl);
 };

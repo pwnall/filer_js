@@ -2,3 +2,5 @@
 test/blobs
 test/chunks
 test/files
+vendor/sjcl
+

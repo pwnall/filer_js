@@ -4,15 +4,18 @@
  * Sets up the upload pipeline.
  * 
  * @param uploadUrl root URL for uploading chunks of a file
+ * @param hasher name of sjcl class for crypto hashes (e.g. "sjcl.hash.sha256")
  * @param options optional flags for tweaking the pipeline performance
  */
-PwnFiler.prototype.initPipeline = function (uploadUrl, options) {
+PwnFiler.prototype.initPipeline = function (uploadUrl, hasher, options) {
   var pipeline = this.pipeline = {};
-  pipeline.blockQ = new PwnFiler.BlockQueue(options.blockSize || 1024 * 1024);
+  pipeline.blockQ = new PwnFiler.BlockQueue(PwnFiler.resolveName(hasher),
+                                            options.blockSize || 1024 * 1024);
   pipeline.readQ = new PwnFiler.TaskQueue(pipeline.blockQ,
       PwnFiler.ReadTask.create, options.readQueueSize || 5);
   pipeline.hashQ = new PwnFiler.TaskQueue(pipeline.readQ,
-      PwnFiler.HashTask.create(this), options.hashQueueSize || 5);
+      PwnFiler.HashTask.create(this, hasher),
+      options.hashQueueSize || 5);
   var filer = this;
   var onProgress = function (blobData, blockSent) {
     filer.onPipelineProgress(blobData, blockSent);

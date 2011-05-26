@@ -1,8 +1,8 @@
 /*jslint white: true, undef: true, newcap: false, nomen: false, onevar: false,
-         regexp: false, plusplus: true, bitwise: true, evil: true, maxlen: 80,
+         regexp: false, plusplus: true, bitwise: true, evil: false, maxlen: 80,
          indent: 2 */
-/*global document, sjcl, window, ArrayBuffer, Element, FileReader, Uint8Array,
-         XMLHttpRequest, Worker, console */
+/*global document, self, sjcl, window, ArrayBuffer, Element, FileReader,
+         Uint8Array, XMLHttpRequest, Worker, console */
 
 /* This file is concatenated first in the big JS file. */
 
@@ -24,6 +24,7 @@
  *                files (should be an 'ol' or 'ul' element)
  *   * blockUploadUrl: backend URL for uploading file fragments
  *   * workerUrl: URL for the filer-worker.min.js stub for Web Workers
+ *   * hasher: name of sjcl class for crypto hashes (e.g. "sjcl.hash.sha256")
  */
 var PwnFiler = PwnFiler || function (options) {
   options = options || {};
@@ -67,7 +68,9 @@ var PwnFiler = PwnFiler || function (options) {
     throw "Missing file selection display";
   }
   
-  this.initPipeline(options.blockUploadUrl, options.pipeline || {});
+  this.initPipeline(options.blockUploadUrl,
+                    options.hasher || 'sjcl.hash.sha256',
+                    options.pipeline || {});
   this.initWorkers(options.workerUrl);
 };
 /**
@@ -129,13 +132,15 @@ PwnFiler.prototype.onFileInputChange = function (event) {
 /** Computationally-intensive cryptography. */
 
 /** Computes a cryptographic hash for a blob (file fragment). */
-PwnFiler.HashTask = function (filer, blobData, callback) {
+PwnFiler.HashTask = function (filer, hasher, blobData, callback) {
   this.blobData = blobData;
   this.callback = callback;
+  this.hasher = hasher;
   
   var task = this;
-  filer.inWorker('PwnFiler.HashTask.hashData', this.blobData.binaryData,
-                function (result) {
+  filer.inWorker('PwnFiler.HashTask.hashData',
+                 { hasher: this.hasher, data: this.blobData.binaryData },
+                 function (result) {
     if (task.blobData === null) {
       return;
     }
@@ -143,23 +148,32 @@ PwnFiler.HashTask = function (filer, blobData, callback) {
     task.callback(task.blobData);
   });
 };
-/** Creates a HashTask instance. */
-PwnFiler.HashTask.create = function (filer) {
+
+/**
+ * Creates a HashTask instance.
+ * 
+ * @param filer PwnFiler instance whose Web Worker will be used
+ * @param hasher name of sjcl class for crypto hashes (e.g. "sjcl.hash.sha256")
+ */
+PwnFiler.HashTask.create = function (filer, hasher) {
   return function (blobData, callback) {
-    return new PwnFiler.HashTask(filer, blobData, callback);
+    return new PwnFiler.HashTask(filer, hasher, blobData, callback);
   };
 };
+
 /** File hashing cannot be aborted. */
 PwnFiler.HashTask.prototype.cancel = function () {
   this.blobData = null;
 };
+
 /**
  * Hashes its argument.
  * 
  * This is computationally intensive and should not be run in the main thread.
  */
-PwnFiler.HashTask.hashData = function (data) {
-  return sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(data));
+PwnFiler.HashTask.hashData = function (request) {
+  var hasher = PwnFiler.resolveName(request.hasher);
+  return sjcl.codec.hex.fromBits(hasher.hash(request.data));
 };
 /** File drag and drop functionality. */
 
@@ -291,15 +305,18 @@ PwnFiler.dataTransferHasFiles = function (data) {
  * Sets up the upload pipeline.
  * 
  * @param uploadUrl root URL for uploading chunks of a file
+ * @param hasher name of sjcl class for crypto hashes (e.g. "sjcl.hash.sha256")
  * @param options optional flags for tweaking the pipeline performance
  */
-PwnFiler.prototype.initPipeline = function (uploadUrl, options) {
+PwnFiler.prototype.initPipeline = function (uploadUrl, hasher, options) {
   var pipeline = this.pipeline = {};
-  pipeline.blockQ = new PwnFiler.BlockQueue(options.blockSize || 1024 * 1024);
+  pipeline.blockQ = new PwnFiler.BlockQueue(PwnFiler.resolveName(hasher),
+                                            options.blockSize || 1024 * 1024);
   pipeline.readQ = new PwnFiler.TaskQueue(pipeline.blockQ,
       PwnFiler.ReadTask.create, options.readQueueSize || 5);
   pipeline.hashQ = new PwnFiler.TaskQueue(pipeline.readQ,
-      PwnFiler.HashTask.create(this), options.hashQueueSize || 5);
+      PwnFiler.HashTask.create(this, hasher),
+      options.hashQueueSize || 5);
   var filer = this;
   var onProgress = function (blobData, blockSent) {
     filer.onPipelineProgress(blobData, blockSent);
@@ -445,8 +462,14 @@ PwnFiler.TaskQueue.prototype.wantData = function () {
 };
 /** Pipeline stages that read a set of files as 1Mb blocks. */
 
-/** Special queue that takes files and breaks them up into blobs. */
-PwnFiler.BlockQueue = function (blockSize) {
+/**
+ * Special queue that takes files and breaks them up into blobs.
+ * 
+ * @param hasher sjcl class for crypto hashes (e.g. sjcl.hash.sha256)
+ * @param blockSize number of bytes in a chunk; files are split into chunks
+ */
+PwnFiler.BlockQueue = function (hasher, blockSize) {
+  this.hasher = hasher;
   this.blockSize = blockSize;
   this.files = [];
   this.currentFile = 0;
@@ -454,8 +477,7 @@ PwnFiler.BlockQueue = function (blockSize) {
 };
 /** Pushes a file into the queue. */
 PwnFiler.BlockQueue.prototype.push = function (fileData) {
-  var fileId =
-      sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(fileData.domFile.name));
+  var fileId = sjcl.codec.hex.fromBits(this.hasher.hash(fileData.domFile.name));
   this.files.push({fileData: fileData, fileId: fileId});
 };
 /** True if there is nothing to pop from the queue. */
@@ -539,6 +561,20 @@ PwnFiler.ReadTask.prototype.cancel = function (event) {
   }
   this.blobData = null;
   this.reader.abort();
+};
+/**
+ * Resolves a dotted name starting from the global namespace.
+ * 
+ * @param name a nested object name, e.g. "PwnFiler.Worker.main"
+ * @return the object pointed by the name
+ */
+PwnFiler.resolveName = function (name) {
+  var parts = name.split('.');
+  var result = self;  // self works in Web Workers too
+  for (var i = 0; i < parts.length; i += 1) {
+    result = result[parts[i]];
+  } 
+  return result;
 };
 /** Keeps track of the files that the user has selected. */
 
@@ -802,17 +838,20 @@ PwnFiler.UploadTask.prototype.cancel = function (event) {
 
 /**
  * Starts up worker threads so they can receive commands.
- * @param workerStubUrl points to the filer-worker.min.js stub
+ * @param workerStubUrl points to the filer-worker.min.js stub; null disables
+ *                      workers
  */
 PwnFiler.prototype.initWorkers = function (workerStubUrl) {
-  var worker = this.worker = new Worker(workerStubUrl);
+  var worker = this.worker = workerStubUrl && (new Worker(workerStubUrl));
   this.workerCallbacks = {};
   this.nextCommandId = 0;
   
   var filer = this;
-  worker.onmessage = function (event) {
-    return filer.onWorkerMessage(event);
-  };
+  if (worker) {
+    worker.onmessage = function (event) {
+      return filer.onWorkerMessage(event);
+    };
+  }
 };
 
 /** Performs the given command in the background. */
@@ -821,7 +860,14 @@ PwnFiler.prototype.inWorker = function (functionName, argument, callback) {
   this.nextCommandId += 1;
   
   this.workerCallbacks[commandId] = callback;
-  this.worker.postMessage({id: commandId, fn: functionName, arg: argument});
+  var command = {id: commandId, fn: functionName, arg: argument};
+  if (this.worker) {
+    this.worker.postMessage(command);
+  } else {
+    // Run the call in the main thread.
+    PwnFiler.Worker.currentFiler = this;
+    PwnFiler.Worker.onMessage({data: command});
+  }
 };
 
 /** Receives command responses from Worker threads. */
@@ -839,9 +885,14 @@ PwnFiler.Worker = {};
 /** Handles events on the worker side. */
 PwnFiler.Worker.onMessage = function (event) {
   var data = event.data;
-  var fn = eval(data.fn);
-  var returnValue =  fn(data.arg);
+  var fn = PwnFiler.resolveName(data.fn);
+  var returnValue = fn(data.arg);
   PwnFiler.Worker.postMessage({id: data.id, result: returnValue});
+};
+
+/** Replaced with the global postMessage in real Web Workers. */
+PwnFiler.Worker.postMessage = function (data) {
+  PwnFiler.Worker.currentFiler.onWorkerMessage({data: data});
 };
 
 /** Executed when a worker starts. */

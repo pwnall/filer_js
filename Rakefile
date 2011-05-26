@@ -14,6 +14,20 @@ require 'rake'
 # Output directory.
 directory 'bin'
 
+# Vendored sjcl.
+file 'vendor/sjcl' do
+  Dir.chdir 'vendor' do
+    Kernel.system 'git clone https://github.com/bitwiseshiftleft/sjcl.git'
+  end
+end
+file 'vendor/sjcl.min.js' => 'vendor/sjcl' do
+  Dir.chdir 'vendor/sjcl' do
+    Kernel.system './configure --without-all --with-sha1 --with-sha256 --with-codecHex'
+    Kernel.system 'make'
+  end
+  FileUtils.cp 'vendor/sjcl/sjcl.js', 'vendor/sjcl.min.js'
+end
+
 # Development binaries.
 file 'bin/filer.js' => Dir['src/filer/*.js'].sort do
   Kernel.system 'cat src/filer/*.js  > bin/filer.js'

@@ -12,8 +12,9 @@ Patches for extending compatibility are always welcome.
 
 USAGE
 
-
-todo
+test/index.html contains an example of usage, and src/filer/_first.js contains
+the spec for the PwnFiler constructor. A nice tutorial will be added here when I
+find the time.
 
 
 BUILDING
@@ -31,8 +32,15 @@ Kick off the build process from rake:
 
     rake build
 
-The build outputs a development version in bin/filer.js and a minified version
-intended for production in bin/filer.min.js
+The build outputs the following files:
+* bin/filer.js is a development version of the filer, used in test/index.html
+* bin/filer.min.js is minified and contains the sjcl dependency code
+* bin/filer-worker.js has a development version of the Web Worker startup stub
+* bin/filer-worker.min.js must be deployed in the same dir as filer.min.js
+
+Filer depends on sjcl, and includes a slimmed down version of it. If you want to
+update the embedded sjcl code, delete vendor/sjcl.min.js and kick off the build
+process.
 
 
 TESTING

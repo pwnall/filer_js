@@ -80,7 +80,7 @@ end
 # Upload file data.
 post '/chunks' do
   chunk = request.body.read
-  chunk_hash = OpenSSL::Digest::SHA256.hexdigest chunk
+  chunk_hash = OpenSSL::Digest::SHA1.hexdigest chunk
   if chunk_hash != env['HTTP_X_PWNFILER_HASH']
     halt 400, 'Content hash does not match'
     return

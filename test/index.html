@@ -26,10 +26,10 @@
   
   <script type="text/javascript">
     var filer = new PwnFiler({uploadButton: '#upload-button',
-                              dropArea: '#drop-area',
-                              selection: '#upload-selection',
-                              blockUploadUrl: '/chunks',
-                              workerUrl: 'files/bin/filer-worker.min.js'});
+        dropArea: '#drop-area', selection: '#upload-selection',
+        blockUploadUrl: '/chunks', workerUrl: 'files/bin/filer-worker.min.js',
+        hasher: 'sjcl.hash.sha1'
+    });
   </script>
 </body>
 </html>

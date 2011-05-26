@@ -1,7 +1,13 @@
 /** Pipeline stages that read a set of files as 1Mb blocks. */
 
-/** Special queue that takes files and breaks them up into blobs. */
-PwnFiler.BlockQueue = function (blockSize) {
+/**
+ * Special queue that takes files and breaks them up into blobs.
+ * 
+ * @param hasher sjcl class for crypto hashes (e.g. sjcl.hash.sha256)
+ * @param blockSize number of bytes in a chunk; files are split into chunks
+ */
+PwnFiler.BlockQueue = function (hasher, blockSize) {
+  this.hasher = hasher;
   this.blockSize = blockSize;
   this.files = [];
   this.currentFile = 0;
@@ -9,8 +15,7 @@ PwnFiler.BlockQueue = function (blockSize) {
 };
 /** Pushes a file into the queue. */
 PwnFiler.BlockQueue.prototype.push = function (fileData) {
-  var fileId =
-      sjcl.codec.hex.fromBits(sjcl.hash.sha256.hash(fileData.domFile.name));
+  var fileId = sjcl.codec.hex.fromBits(this.hasher.hash(fileData.domFile.name));
   this.files.push({fileData: fileData, fileId: fileId});
 };
 /** True if there is nothing to pop from the queue. */
